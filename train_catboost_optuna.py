@@ -709,7 +709,7 @@ def main():
 
     # Prepare X/y
     drop_cols = set(args.drop_cols)
-    y = df[args.target].astype(int)
+    y = df[args.target].eq('new').astype(int)
 
     exclude = set([args.target]) | set(args.id_cols) | drop_cols
     if args.group_col:
