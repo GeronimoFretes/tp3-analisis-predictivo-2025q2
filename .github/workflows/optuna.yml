@@ -22,12 +22,11 @@ jobs:
         with:
           python-version: "3.11"
 
-
       - name: Ensure artifacts placeholder
         run: |
           mkdir -p artifacts
           echo "placeholder" > artifacts/.keep
-          
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -51,7 +50,6 @@ jobs:
             --n-full-seed-models 3 \
             --patience-trials 20 \
             --min-improve 0.0002 \
-            --checkpoint-every-trials 5
       
       - name: Dump current best trial to artifacts (snapshot from DB)
         if: always()
