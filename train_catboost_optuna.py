@@ -778,63 +778,67 @@ def main():
     )
     
     start_time = time.time()
-    trial_durations = []
-    best_val_global = None     # tracks the overall best objective value
-    no_improve_count = 0       # consecutive completed trials without improvement
+    trial_times = []
 
+    def _cb_progress(study_obj, trial):
+        if not args.progress:
+            return
+        dur = trial.duration.total_seconds() if trial.duration else 0.0
+        trial_times.append(dur)
+        avg = sum(trial_times) / max(1, len(trial_times))
+        mp = trial.user_attrs.get("mean_pr_auc")
+        mr = trial.user_attrs.get("mean_roc_auc")
+        elapsed_min = (time.time() - start_time) / 60.0
+        print(f"[Trial {trial.number}] value={trial.value:.6f}  PR-AUC={mp}  ROC-AUC={mr}  "
+            f"dur={dur:.1f}s  avg={avg:.1f}s  elapsed~{elapsed_min:.1f} min")
+        
+        stale = (trial.number - plateau_state["last_improve_trial"]) if plateau_state["last_improve_trial"] >= 0 else (trial.number + 1)
+        if args.patience_trials > 0:
+            print(f"[Plateau] stale={stale}/{args.patience_trials}  best={plateau_state['best_value']:.6f}")
+
+    # --- Plateau early-stop across trials (FIXED SCOPE) ---
+    # Keep state in a dict so the inner function can mutate it safely.
+    plateau_state = {
+        "best_value": float("-inf"),
+        "last_improve_trial": -1,
+    }
+    
     def _cb_plateau(study_obj, trial):
-        global best_val_global, no_improve_count
+        """Stop the study when no improvement >= min_improve has happened for patience-trials."""
+        if args.patience_trials <= 0:
+            return  # disabled
 
-        # ---- progress printout ----
-        if args.progress:
-            dur = trial.duration.total_seconds() if trial.duration else 0.0
-            trial_durations.append(dur)
-            avg = sum(trial_durations) / max(1, len(trial_durations))
-            mp = trial.user_attrs.get("mean_pr_auc")
-            mr = trial.user_attrs.get("mean_roc_auc")
-            elapsed_min = (time.time() - start_time) / 60.0
-            print(f"[Trial {trial.number}] value={trial.value:.6f}  PR-AUC={mp}  ROC-AUC={mr}  "
-                f"dur={dur:.1f}s  avg={avg:.1f}s  elapsed~{elapsed_min:.1f} min")
+        val = trial.value
+        best = plateau_state["best_value"]
+        # improvement if better by at least min_improve
+        improved = (val is not None) and (val >= best + args.min_improve)
 
-        # ---- establish current best (from resumed study if any) ----
-        if best_val_global is None:
-            if study_obj.best_trial is not None and study_obj.best_trial.value is not None:
-                best_val_global = study_obj.best_trial.value
-            else:
-                best_val_global = -math.inf
+        if improved:
+            plateau_state["best_value"] = val
+            plateau_state["last_improve_trial"] = trial.number
+            print(f"[Plateau] Improvement detected. best_value={val:.6f} at trial {trial.number}.")
+        else:
+            last = plateau_state["last_improve_trial"]
+            stale = (trial.number - last) if last >= 0 else (trial.number + 1)
+            if stale >= args.patience_trials:
+                print(f"[Plateau] No improvement >= {args.min_improve} for {stale} trials. Stopping study.")
+                study_obj.stop()  # graceful stop after current trial finishes
 
-        # ---- plateau tracking: only count COMPLETED trials ----
-        if trial.state == TrialState.COMPLETE and trial.value is not None:
-            improved = trial.value > (best_val_global + (args.min_improve or 0.0))
-            if improved:
-                best_val_global = trial.value
-                no_improve_count = 0
-                # checkpoint best-so-far artifacts
-                (artifacts / "best_params_checkpoint.json").write_text(
-                    json.dumps(study_obj.best_trial.params, indent=2)
-                )
-                (artifacts / "study_best_checkpoint.json").write_text(json.dumps({
-                    "value": study_obj.best_value,
-                    "number": study_obj.best_trial.number,
-                    "user_attrs": study_obj.best_trial.user_attrs,
-                }, indent=2))
-            else:
-                no_improve_count += 1
-
-        # ---- enforce patience ----
-        if args.patience_trials is not None and no_improve_count >= args.patience_trials:
-            print(f"[early-stop] No improvement > {args.min_improve} for "
-                f"{no_improve_count} completed trials. Stopping study.")
-            study_obj.stop()
-
+    # Build callbacks list
+    callbacks = []
+    if args.progress:
+        callbacks.append(_cb_progress)
+    callbacks.append(_cb_plateau)  # safe even if patience is 0 (no-op)
+    
     try:
+        # --- Run optimization ---
         study.optimize(
             objective,
-            n_trials=None,                   # run until stopped by plateau/timeout/Ctrl-C
-            timeout=args.timeout,            # optional hard time cap (seconds)
+            n_trials=None,                # run until timeout or plateau stop
+            timeout=args.timeout,         # you can pass --timeout from GH Actions, or leave None
             gc_after_trial=True,
             show_progress_bar=args.progress,
-            callbacks=[_cb_plateau],
+            callbacks=callbacks,
         )
     except KeyboardInterrupt:
         print("[interrupt] KeyboardInterrupt received. Proceeding to finalize with best-so-far trial...")
