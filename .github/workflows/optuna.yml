@@ -46,7 +46,7 @@ jobs:
             --progress --log-every-iter 50 \
             --max-iterations 5000 \
             --early-stopping-rounds 200 \
-            --timeout 19800 \ 
+            --timeout 19800 \
             --artifacts-dir artifacts \
             --n-full-seed-models 3 \
             --patience-trials 20 \
