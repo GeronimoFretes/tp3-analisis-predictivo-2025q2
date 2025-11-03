@@ -53,6 +53,8 @@ from optuna.trial import TrialState
 
 from catboost import CatBoostClassifier, Pool
 
+EPS = 1e-10
+PLATEAU_KEY = "plateau_state_v2"
 
 # -----------------------
 # Utilities
@@ -85,6 +87,59 @@ def get_cv(y: pd.Series, groups: Optional[pd.Series], n_splits: int, seed: int):
         return GroupKFold(n_splits=n_splits)
     else:
         return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+
+def _plateau_scan(trials, min_improve: float):
+    """
+    Scan full trial history (COMPLETE trials) and compute:
+      - plateau_best_value: last value that improved by >= min_improve
+      - plateau_best_trial: its trial number
+      - stale: consecutive non-improving trials since then
+    """
+    complete = [t for t in trials if t.state == optuna.trial.TrialState.COMPLETE]
+    complete = sorted(complete, key=lambda t: t.number)
+    if not complete:
+        return {"plateau_best_value": -float("inf"), "plateau_best_trial": None, "stale": 0}
+
+    plateau_best = complete[0].value
+    plateau_best_trial = complete[0].number
+    stale = 0
+
+    for t in complete[1:]:
+        v = t.value
+        # improvement must be >= min_improve to reset the counter
+        if v >= plateau_best + float(min_improve):
+            plateau_best = v
+            plateau_best_trial = t.number
+            stale = 0
+        else:
+            stale += 1
+
+    return {
+        "plateau_best_value": float(plateau_best),
+        "plateau_best_trial": plateau_best_trial,
+        "stale": int(stale),
+    }
+
+def get_plateau_state(study: optuna.Study, min_improve: float):
+    """
+    Load plateau state from user_attrs. If missing/corrupt, recompute from history and persist.
+    """
+    ua = study.user_attrs or {}
+    if PLATEAU_KEY in ua:
+        try:
+            state = json.loads(ua[PLATEAU_KEY])
+            # guard missing keys
+            if {"plateau_best_value","plateau_best_trial","stale"} <= set(state):
+                return state
+        except Exception:
+            pass
+    # recompute from DB
+    state = _plateau_scan(study.get_trials(deepcopy=False), min_improve)
+    study.set_user_attr(PLATEAU_KEY, json.dumps(state))
+    return state
+
+def set_plateau_state(study: optuna.Study, state: dict):
+    study.set_user_attr(PLATEAU_KEY, json.dumps(state))
 
 def metrics_from_probs(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[str, float]:
     roc = roc_auc_score(y_true, y_prob)
@@ -765,6 +820,11 @@ def main():
             load_if_exists=True
         )
 
+    # Initialize / resume plateau state from DB and show it
+    state0 = get_plateau_state(study, args.min_improve)
+    if args.progress:
+        print(f"[Plateau] resume: stale={state0['stale']}  best={state0['plateau_best_value']:.6f}  best_trial={state0['plateau_best_trial']}")
+
     objective = Objective(
         X=X, y=y, groups=groups, cat_cols=cat_cols,
         n_splits=args.tune_n_splits if args.tune_n_splits else args.n_splits,
@@ -776,11 +836,43 @@ def main():
         progress=args.progress,
         log_every_iter=args.log_every_iter,
     )
-    
+
+    def _cb_plateau(study_obj: optuna.Study, trial: optuna.trial.FrozenTrial):
+        # Load current state (recomputed if missing)
+        state = get_plateau_state(study_obj, args.min_improve)
+        best = state["plateau_best_value"]
+        stale = int(state["stale"])
+
+        # Current trial value
+        val = trial.value
+        if val is None or not math.isfinite(val):
+            return
+
+        improved = (val >= best + float(args.min_improve))
+        if improved:
+            best = float(val)
+            state["plateau_best_value"] = best
+            state["plateau_best_trial"] = trial.number
+            stale = 0
+        else:
+            stale += 1
+
+        state["stale"] = stale
+        set_plateau_state(study_obj, state)
+
+        if args.progress:
+            print(f"[Plateau] stale={stale}/{args.patience_trials}  best={best:.6f}  best_trial={state['plateau_best_trial']}")
+
+        # Optional early stop on plateau
+        if args.patience_trials and stale >= args.patience_trials:
+            if args.progress:
+                print("[Plateau] patience reached; requesting study stop.")
+            study_obj.stop()
+
     start_time = time.time()
     trial_times = []
 
-    def _cb_progress(study_obj, trial):
+    def _cb_progress(study, trial):
         if not args.progress:
             return
         dur = trial.duration.total_seconds() if trial.duration else 0.0
@@ -791,39 +883,7 @@ def main():
         elapsed_min = (time.time() - start_time) / 60.0
         print(f"[Trial {trial.number}] value={trial.value:.6f}  PR-AUC={mp}  ROC-AUC={mr}  "
             f"dur={dur:.1f}s  avg={avg:.1f}s  elapsed~{elapsed_min:.1f} min")
-        
-        stale = (trial.number - plateau_state["last_improve_trial"]) if plateau_state["last_improve_trial"] >= 0 else (trial.number + 1)
-        if args.patience_trials > 0:
-            print(f"[Plateau] stale={stale}/{args.patience_trials}  best={plateau_state['best_value']:.6f}")
-
-    # --- Plateau early-stop across trials (FIXED SCOPE) ---
-    # Keep state in a dict so the inner function can mutate it safely.
-    plateau_state = {
-        "best_value": float("-inf"),
-        "last_improve_trial": -1,
-    }
-    
-    def _cb_plateau(study_obj, trial):
-        """Stop the study when no improvement >= min_improve has happened for patience-trials."""
-        if args.patience_trials <= 0:
-            return  # disabled
-
-        val = trial.value
-        best = plateau_state["best_value"]
-        # improvement if better by at least min_improve
-        improved = (val is not None) and (val >= best + args.min_improve)
-
-        if improved:
-            plateau_state["best_value"] = val
-            plateau_state["last_improve_trial"] = trial.number
-            print(f"[Plateau] Improvement detected. best_value={val:.6f} at trial {trial.number}.")
-        else:
-            last = plateau_state["last_improve_trial"]
-            stale = (trial.number - last) if last >= 0 else (trial.number + 1)
-            if stale >= args.patience_trials:
-                print(f"[Plateau] No improvement >= {args.min_improve} for {stale} trials. Stopping study.")
-                study_obj.stop()  # graceful stop after current trial finishes
-
+      
     # Build callbacks list
     callbacks = []
     if args.progress:

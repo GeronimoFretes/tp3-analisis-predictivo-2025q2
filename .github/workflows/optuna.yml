@@ -3,7 +3,7 @@ name: Optuna Study
 on:
   workflow_dispatch: {}  # run manually from Actions tab
   schedule:
-    - cron: "0 * * * *" 
+    - cron: "0 */6 * * *" 
 
 jobs:
   tune:
