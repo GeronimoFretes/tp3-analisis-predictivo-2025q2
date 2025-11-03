@@ -36,6 +36,7 @@ jobs:
         run: |
           python train_catboost_optuna.py \
             --data data/train.parquet \
+            --group-col seller_id
             --target condition \
             --study-storage "$STUDY_STORAGE" \
             --study-name "$STUDY_NAME" \
@@ -50,6 +51,9 @@ jobs:
             --n-full-seed-models 3 \
             --patience-trials 20 \
             --min-improve 0.0002 \
+            --segment-threshold-cols category_id listing_type_id \
+            --min-segment-size 300 \
+            --n-full-seed-models 3
       
       - name: Dump current best trial to artifacts (snapshot from DB)
         if: always()
