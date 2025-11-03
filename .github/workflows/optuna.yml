@@ -36,7 +36,7 @@ jobs:
         run: |
           python train_catboost_optuna.py \
             --data data/train.parquet \
-            --group-col seller_id
+            --group-col seller_id \
             --target condition \
             --study-storage "$STUDY_STORAGE" \
             --study-name "$STUDY_NAME" \
