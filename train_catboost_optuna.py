@@ -34,6 +34,7 @@ import random
 import time
 import math
 from pathlib import Path
+import hashlib
 from typing import List, Optional, Tuple, Dict, Any
 
 import numpy as np
@@ -87,6 +88,17 @@ def get_cv(y: pd.Series, groups: Optional[pd.Series], n_splits: int, seed: int):
         return GroupKFold(n_splits=n_splits)
     else:
         return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+
+def param_signature(params: Dict[str, Any]) -> str:
+    """Stable signature for an Optuna param dict (floats normalized)."""
+    def _norm(v):
+        if isinstance(v, float):
+            # stable float text (avoid tiny repr diffs)
+            return float(np.format_float_positional(v, unique=True, precision=12, trim='-'))
+        return v
+    payload = {k: _norm(v) for k, v in sorted(params.items())}
+    s = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.md5(s.encode("utf-8")).hexdigest()[:12]
 
 def _plateau_scan(trials, min_improve: float):
     """
@@ -352,6 +364,29 @@ class Objective:
 
     def __call__(self, trial: optuna.Trial) -> float:
         params = self.suggest_params(trial)
+        
+        # --- duplicate guard ---
+        sig = param_signature(params)
+        trial.set_user_attr("param_sig", sig)
+
+        # Collect signatures of already COMPLETED trials in this study
+        completed = trial.study.get_trials(
+            states=(optuna.trial.TrialState.COMPLETE,),
+            deepcopy=False
+        )
+        seen_sigs = set()
+        for t in completed:
+            ps = t.user_attrs.get("param_sig")
+            if ps is None:
+                ps = param_signature(t.params)  # for older trials without the attr
+            seen_sigs.add(ps)
+
+        if sig in seen_sigs:
+            if self.progress:
+                print(f"[Trial {trial.number}] DUPLICATE params (sig={sig}) → pruning fast.")
+            raise optuna.TrialPruned("duplicate-params")
+        # --- end duplicate guard ---
+        
         cv = get_cv(self.y, self.groups, self.n_splits, self.seed)
 
         metrics_all = []
@@ -427,6 +462,8 @@ class Objective:
             "auto_class_weights": auto_class_weights,
             "scale_pos_weight": scale_pos_weight,
         }
+        
+        
         return params
 
 
