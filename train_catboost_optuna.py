@@ -50,7 +50,6 @@ import optuna
 from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 from optuna.trial import TrialState
-from optuna.exceptions import NoSuchStudyError
 
 from catboost import CatBoostClassifier, Pool
 
