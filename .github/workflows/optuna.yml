@@ -14,7 +14,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"          # stream logs live
       STUDY_STORAGE: ${{ secrets.STUDY_STORAGE }}  # e.g., postgresql://...
-      STUDY_NAME: meli_used_new_continuous_2025-11-03
+      STUDY_NAME: meli_used_new_continuous_2025-11-05
     steps:
       - uses: actions/checkout@v4
 

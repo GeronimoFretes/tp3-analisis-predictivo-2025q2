@@ -404,24 +404,39 @@ class Objective:
                 early_stopping_rounds=self.early_stopping,
                 log_every_iter=self.log_every_iter,
             )
+            # Compute fold-level accuracy if requested
+            if self.eval_metric == "accuracy":
+                preds_bin = (y_pred_va >= 0.5).astype(int)
+                acc = accuracy_score(y_va.values, preds_bin)
+                target_metric = acc
+            else:
+                target_metric = m["pr_auc"] if self.eval_metric == "pr_auc" else m["roc_auc"]
 
-            # Pruning
-            target_metric = m["pr_auc"] if self.eval_metric == "pr_auc" else m["roc_auc"]
             trial.report(target_metric, step=fold_idx)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
-            metrics_all.append(m)
+            # Record metrics
+            if self.eval_metric == "accuracy":
+                metrics_all.append({"accuracy": target_metric})
+            else:
+                metrics_all.append(m)
 
-        mean_pr = float(np.mean([m["pr_auc"] for m in metrics_all]))
-        mean_roc = float(np.mean([m["roc_auc"] for m in metrics_all]))
-        trial.set_user_attr("mean_pr_auc", mean_pr)
-        trial.set_user_attr("mean_roc_auc", mean_roc)
-
-        if self.progress:
-            print(f"[Trial {trial.number}] DONE  mean PR-AUC={mean_pr:.5f}  mean ROC-AUC={mean_roc:.5f}")
-
-        return mean_pr if self.eval_metric == "pr_auc" else mean_roc
+        # Aggregate and return the metric of interest
+        if self.eval_metric == "accuracy":
+            mean_acc = float(np.mean([m["accuracy"] for m in metrics_all]))
+            trial.set_user_attr("mean_accuracy", mean_acc)
+            if self.progress:
+                print(f"[Trial {trial.number}] DONE  mean ACCURACY={mean_acc:.5f}")
+            return mean_acc
+        else:
+            mean_pr = float(np.mean([m["pr_auc"] for m in metrics_all]))
+            mean_roc = float(np.mean([m["roc_auc"] for m in metrics_all]))
+            trial.set_user_attr("mean_pr_auc", mean_pr)
+            trial.set_user_attr("mean_roc_auc", mean_roc)
+            if self.progress:
+                print(f"[Trial {trial.number}] DONE  mean PR-AUC={mean_pr:.5f}  mean ROC-AUC={mean_roc:.5f}")
+            return mean_pr if self.eval_metric == "pr_auc" else mean_roc
 
     def suggest_params(self, trial: optuna.Trial) -> Dict[str, Any]:
         # CatBoost search space
@@ -756,7 +771,7 @@ def main():
     parser.add_argument("--max-iterations", type=int, default=5000)
     parser.add_argument("--early-stopping-rounds", type=int, default=200)
     parser.add_argument("--thread-count", type=int, default=-1, help="CatBoost thread_count (-1 uses all).")
-    parser.add_argument("--eval-metric", type=str, choices=["pr_auc", "roc_auc"], default="pr_auc")
+    parser.add_argument("--eval-metric", type=str, choices=["pr_auc", "roc_auc", "accuracy"], default="accuracy")
     parser.add_argument("--calibrate", type=str, choices=["none", "platt", "isotonic"], default="none")
     parser.add_argument("--artifacts-dir", type=str, default="artifacts")
     parser.add_argument("--progress", action="store_true", help="Show Optuna progress bar and per-trial logs.")
