@@ -318,7 +318,8 @@ def fit_one_fold(
     )
 
     y_pred_va = cb.predict_proba(valid_pool)[:, 1]
-    fold_metrics = metrics_from_probs(y_va.values, y_pred_va)
+    thr_fold, acc_fold = best_threshold_by_accuracy(y_va.values, y_pred_va)
+    fold_metrics = {"accuracy_at_best_thr": acc_fold, "best_thr": thr_fold}
     return cb, y_pred_va, fold_metrics
 
 
@@ -404,45 +405,26 @@ class Objective:
                 early_stopping_rounds=self.early_stopping,
                 log_every_iter=self.log_every_iter,
             )
-            # Compute fold-level accuracy if requested
-            if self.eval_metric == "accuracy":
-                preds_bin = (y_pred_va >= 0.5).astype(int)
-                acc = accuracy_score(y_va.values, preds_bin)
-                target_metric = acc
-            else:
-                target_metric = m["pr_auc"] if self.eval_metric == "pr_auc" else m["roc_auc"]
-
+            
+            acc = m["accuracy_at_best_thr"]
+            target_metric = acc
             trial.report(target_metric, step=fold_idx)
             if trial.should_prune():
                 raise optuna.TrialPruned()
+            metrics_all.append(acc)
+            
+        mean_value = float(np.mean(metrics_all))
+        trial.set_user_attr("mean_accuracy", mean_value)
+        if self.progress:
+            print(f"[Trial {trial.number}] DONE  mean ACCURACY={mean_value:.5f}")
+        return mean_value
 
-            # Record metrics
-            if self.eval_metric == "accuracy":
-                metrics_all.append({"accuracy": target_metric})
-            else:
-                metrics_all.append(m)
-
-        # Aggregate and return the metric of interest
-        if self.eval_metric == "accuracy":
-            mean_acc = float(np.mean([m["accuracy"] for m in metrics_all]))
-            trial.set_user_attr("mean_accuracy", mean_acc)
-            if self.progress:
-                print(f"[Trial {trial.number}] DONE  mean ACCURACY={mean_acc:.5f}")
-            return mean_acc
-        else:
-            mean_pr = float(np.mean([m["pr_auc"] for m in metrics_all]))
-            mean_roc = float(np.mean([m["roc_auc"] for m in metrics_all]))
-            trial.set_user_attr("mean_pr_auc", mean_pr)
-            trial.set_user_attr("mean_roc_auc", mean_roc)
-            if self.progress:
-                print(f"[Trial {trial.number}] DONE  mean PR-AUC={mean_pr:.5f}  mean ROC-AUC={mean_roc:.5f}")
-            return mean_pr if self.eval_metric == "pr_auc" else mean_roc
 
     def suggest_params(self, trial: optuna.Trial) -> Dict[str, Any]:
         # CatBoost search space
         depth = trial.suggest_int("depth", 4, 10)
-        l2_leaf_reg = trial.suggest_float("l2_leaf_reg", 1.0, 20.0, log=True)
-        learning_rate = trial.suggest_float("learning_rate", 0.02, 0.2, log=True)
+        l2_leaf_reg = trial.suggest_float("l2_leaf_reg", 1.0, 25.0, log=True)
+        learning_rate = trial.suggest_float("learning_rate", 0.01, 0.3, log=True)
         bagging_temperature = trial.suggest_float("bagging_temperature", 0.0, 1.0)
         random_strength = trial.suggest_float("random_strength", 1.0, 50.0)
         min_data_in_leaf = trial.suggest_int("min_data_in_leaf", 10, 200)
@@ -461,7 +443,7 @@ class Objective:
 
         params = {
             "loss_function": "Logloss",
-            "eval_metric": "AUC",
+            "eval_metric": "Accuracy" if self.eval_metric == "accuracy" else "AUC",
             "iterations": self.max_iterations,
             "od_type": "Iter",
             "depth": depth,
@@ -581,8 +563,7 @@ def train_and_save_best(
 
     out = {
         "cv_metrics_mean": {
-            "roc_auc": float(np.mean([m["roc_auc"] for m in fold_metrics])),
-            "pr_auc": float(np.mean([m["pr_auc"] for m in fold_metrics])),
+            "accuracy": float(np.mean([m.get("accuracy", np.nan) for m in fold_metrics if "accuracy" in m])),
         },
         "oof_metrics": base_metrics,
         "threshold_metric": threshold_metric,
@@ -763,7 +744,7 @@ def main():
     parser.add_argument("--categoricals", type=str, nargs="*", default=None, help="Optional explicit categorical column names.")
     parser.add_argument("--drop-cols", type=str, nargs="*", default=[], help="Columns to drop before modeling.")
     parser.add_argument("--n-splits", type=int, default=5)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=int(time.time()) % 10_000_000)
     parser.add_argument("--timeout", type=int, default=None, help="Seconds to stop Optuna early (optional).")
     parser.add_argument("--study-name", type=str, default="catboost_meli")
     parser.add_argument("--study-storage", type=str, default="sqlite:///optuna_study.db", help="Optuna storage URI.")
@@ -771,7 +752,7 @@ def main():
     parser.add_argument("--max-iterations", type=int, default=5000)
     parser.add_argument("--early-stopping-rounds", type=int, default=200)
     parser.add_argument("--thread-count", type=int, default=-1, help="CatBoost thread_count (-1 uses all).")
-    parser.add_argument("--eval-metric", type=str, choices=["pr_auc", "roc_auc", "accuracy"], default="accuracy")
+    parser.add_argument("--eval-metric", type=str, choices=["accuracy"], default="accuracy")
     parser.add_argument("--calibrate", type=str, choices=["none", "platt", "isotonic"], default="none")
     parser.add_argument("--artifacts-dir", type=str, default="artifacts")
     parser.add_argument("--progress", action="store_true", help="Show Optuna progress bar and per-trial logs.")
@@ -839,8 +820,14 @@ def main():
             X[c] = X[c].astype("object").fillna("__NA__")
 
     # Create Optuna study
-    sampler = TPESampler(seed=args.seed, multivariate=True, group=True)
-    pruner = MedianPruner(n_warmup_steps=1)
+    sampler = TPESampler(
+        seed=int(time.time()),
+        multivariate=True,
+        group=False,         
+        consider_prior=True,
+        n_startup_trials=10  
+    )
+    pruner = MedianPruner(n_warmup_steps=2)
 
     if args.resume:
         try:
@@ -930,11 +917,19 @@ def main():
         dur = trial.duration.total_seconds() if trial.duration else 0.0
         trial_times.append(dur)
         avg = sum(trial_times) / max(1, len(trial_times))
-        mp = trial.user_attrs.get("mean_pr_auc")
-        mr = trial.user_attrs.get("mean_roc_auc")
         elapsed_min = (time.time() - start_time) / 60.0
-        print(f"[Trial {trial.number}] value={trial.value:.6f}  PR-AUC={mp}  ROC-AUC={mr}  "
-            f"dur={dur:.1f}s  avg={avg:.1f}s  elapsed~{elapsed_min:.1f} min")
+
+        val = trial.value
+        val_str = f"{val:.6f}" if isinstance(val, (int, float)) and math.isfinite(val) else "NA"
+
+        metric_val = trial.user_attrs.get(f"mean_{args.eval_metric}")
+        metric_str = (f"{metric_val:.6f}" if isinstance(metric_val, (int, float)) and
+                    math.isfinite(metric_val) else "NA")
+
+        print(f"[Trial {trial.number}] state={trial.state.name} value={val_str} "
+            f"{args.eval_metric.upper()}={metric_str} dur={dur:.1f}s "
+            f"avg={avg:.1f}s elapsed~{elapsed_min:.1f} min")
+
       
     # Build callbacks list
     callbacks = []
@@ -999,8 +994,7 @@ def main():
     )
 
     print("\n=== Done (Training) ===")
-    print("CV mean metrics:", summary["cv_metrics_mean"])
-    print("OOF metrics:", summary["oof_metrics"])
+    print("CV mean accuracy:", summary["cv_metrics_mean"].get("accuracy"))
     print(f"Threshold metric: {summary['threshold_metric']}")
     print("Best threshold:", summary["best_threshold"], "Value:", summary["best_threshold_value"])
     if summary["oof_metrics_calibrated"] is not None:

@@ -14,7 +14,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"          # stream logs live
       STUDY_STORAGE: ${{ secrets.STUDY_STORAGE }}  # e.g., postgresql://...
-      STUDY_NAME: meli_used_new_continuous_2025-11-05
+      STUDY_NAME: meli_used_new_continuous_2025-11-06
     steps:
       - uses: actions/checkout@v4
 
@@ -41,19 +41,19 @@ jobs:
             --study-storage "$STUDY_STORAGE" \
             --study-name "$STUDY_NAME" \
             --resume \
-            --tune-n-splits 3 \
+            --tune-n-splits 5 \
             --n-splits 5 \
-            --progress --log-every-iter 50 \
+            --progress --log-every-iter 100 \
             --max-iterations 5000 \
             --early-stopping-rounds 200 \
             --timeout 19800 \
             --artifacts-dir artifacts \
             --n-full-seed-models 3 \
             --patience-trials 20 \
-            --min-improve 0.0002 \
-            --segment-threshold-cols category_id listing_type_id \
-            --min-segment-size 300 \
-            --n-full-seed-models 3
+            --min-improve 0.0005 \
+            --categoricals listing_type_id category_level1 price_bin10 category_id \
+            --segment-threshold-cols listing_type_id category_level1 price_bin10 shipping_mode \
+            --min-segment-size 300 
       
       - name: Dump current best trial to artifacts (snapshot from DB)
         if: always()
