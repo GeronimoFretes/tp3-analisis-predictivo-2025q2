@@ -425,7 +425,6 @@ class Objective:
         depth = trial.suggest_int("depth", 5, 12)
         l2_leaf_reg = trial.suggest_float("l2_leaf_reg", 1.0, 50.0, log=True)
         learning_rate = trial.suggest_float("learning_rate", 0.01, 0.3, log=True)
-        bagging_temperature = trial.suggest_float("bagging_temperature", 0.0, 5.0)
         random_strength = trial.suggest_float("random_strength", 1.0, 100.0)
         min_data_in_leaf = trial.suggest_int("min_data_in_leaf", 10, 200)
         border_count = trial.suggest_int("border_count", 32, 254)
@@ -433,15 +432,18 @@ class Objective:
         
         bootstrap_type = trial.suggest_categorical("bootstrap_type", ["MVS", "Bernoulli", "Bayesian"])
         subsample = None
-        if bootstrap_type in ("Bernoulli", "Bayesian"):
+        bagging_temperature = None
+        if bootstrap_type == "Bernoulli":
             subsample = trial.suggest_float("subsample", 0.6, 1.0)
-                
+        elif bootstrap_type == "Bayesian":
+            bagging_temperature = trial.suggest_float("bagging_temperature", 0.0, 5.0)
+                    
         rsm = trial.suggest_float("rsm", 0.70, 0.95)
+        
         # weighting_mode = trial.suggest_categorical(
         #     "weighting_mode", ["none", "auto_balanced", "scale_pos_weight"]
         # )
         weighting_mode = None
-        
         auto_class_weights = None
         scale_pos_weight = None
         if weighting_mode == "auto_balanced":
@@ -458,7 +460,6 @@ class Objective:
             "depth": depth,
             "l2_leaf_reg": l2_leaf_reg,
             "learning_rate": learning_rate,
-            "bagging_temperature": bagging_temperature,
             "random_strength": random_strength,
             "min_data_in_leaf": min_data_in_leaf,
             "border_count": border_count,
@@ -472,7 +473,8 @@ class Objective:
         }
         if subsample is not None:
             params["subsample"] = subsample
-        
+        if bagging_temperature is not None:
+            params["bagging_temperature"] = bagging_temperature
         
         return params
 
