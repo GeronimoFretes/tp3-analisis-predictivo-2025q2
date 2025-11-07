@@ -68,6 +68,38 @@ def set_seed(seed: int = 42):
 def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
+def _norm_key(v):
+    # Stable key for JSON + matching at inference
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return "__NA__"
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        x = float(v)
+        # collapse 1.0 -> 1 to avoid '1' vs '1.0' mismatches
+        if abs(x - round(x)) < 1e-9:
+            return int(round(x))
+        return x
+    return str(v) if not isinstance(v, (str, int, float, bool)) else v
+
+def json_ready(obj):
+    # Recursively make anything JSON-serializable (incl. NumPy scalars & NaN)
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        out = {}
+        for k, v in obj.items():
+            kk = k if isinstance(k, (str, int, float, bool, type(None))) else str(k)
+            out[kk] = json_ready(v)
+        return out
+    if isinstance(obj, (list, tuple, set)):
+        return [json_ready(x) for x in obj]
+    return obj
+
 def detect_cat_cols(df: pd.DataFrame, exclude: List[str]) -> List[str]:
     # Identify object/category/boolean + low-cardinality integers as categorical
     cats = []
@@ -199,17 +231,17 @@ def compute_segment_thresholds(
 
     chooser = best_threshold_by_accuracy if metric == "accuracy" else best_threshold_by_f1
     global_thr, _ = chooser(y_true_np, y_prob_np)
-
+    
     for col in segments.columns:
-        col_map: Dict[Any, float] = {}
+        col_map = {}
         s = segments[col].values
         for val in pd.Series(s).unique():
             mask = (s == val)
             if mask.sum() < min_segment_size:
-                col_map[val] = global_thr
+                col_map[_norm_key(val)] = float(global_thr)
                 continue
             thr, _ = chooser(y_true_np[mask], y_prob_np[mask])
-            col_map[val] = thr
+            col_map[_norm_key(val)] = float(thr)
         thr_map[col] = col_map
     return thr_map
 
@@ -230,16 +262,20 @@ def apply_segment_thresholds(
     used = np.zeros_like(prob, dtype=bool)
 
     for col in segments.columns:
-        col_rules = thr_map.get(col, {})
+        raw_rules = thr_map.get(col, {})
+        # normalize rule keys once
+        col_rules = { _norm_key(k): v for k, v in raw_rules.items() }
         vals = segments[col].values
-        uniq_vals = [v for v in pd.Series(vals).unique() if v in col_rules]
-        if len(uniq_vals) == 0:
-            continue
+        uniq_vals = pd.Series(vals).unique()
         for v in uniq_vals:
+            key = _norm_key(v)
+            thr = col_rules.get(key)
+            if thr is None:
+                continue
             m = (~used) & (vals == v)
             if not np.any(m):
                 continue
-            out[m] = (prob[m] >= col_rules[v]).astype(int)
+            out[m] = (prob[m] >= thr).astype(int)
             used[m] = True
 
     out[~used] = (prob[~used] >= thr_global).astype(int)
