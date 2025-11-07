@@ -422,13 +422,13 @@ class Objective:
 
     def suggest_params(self, trial: optuna.Trial) -> Dict[str, Any]:
         # CatBoost search space
-        depth = trial.suggest_int("depth", 5, 12)
+        depth = trial.suggest_int("depth", 5, 10)
         l2_leaf_reg = trial.suggest_float("l2_leaf_reg", 1.0, 50.0, log=True)
         learning_rate = trial.suggest_float("learning_rate", 0.01, 0.3, log=True)
         random_strength = trial.suggest_float("random_strength", 1.0, 100.0)
         min_data_in_leaf = trial.suggest_int("min_data_in_leaf", 10, 200)
-        border_count = trial.suggest_int("border_count", 32, 254)
-        one_hot_max_size = trial.suggest_int("one_hot_max_size", 2, 32)
+        border_count = trial.suggest_int("border_count", 32, 128)
+        one_hot_max_size = trial.suggest_int("one_hot_max_size", 2, 8)
         
         bootstrap_type = trial.suggest_categorical("bootstrap_type", ["MVS", "Bernoulli", "Bayesian"])
         subsample = None
@@ -465,7 +465,7 @@ class Objective:
             "border_count": border_count,
             "bootstrap_type": bootstrap_type,
             "task_type": "CPU",
-            "boosting_type": "Ordered",
+            "boosting_type": "Plain",
             "auto_class_weights": auto_class_weights,
             "scale_pos_weight": scale_pos_weight,
             "one_hot_max_size": one_hot_max_size,
