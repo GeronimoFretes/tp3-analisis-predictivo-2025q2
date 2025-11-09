@@ -464,22 +464,22 @@ class Objective:
         random_strength = trial.suggest_float("random_strength", 1.0, 100.0)
         min_data_in_leaf = trial.suggest_int("min_data_in_leaf", 10, 200)
         border_count = trial.suggest_int("border_count", 32, 128)
-        one_hot_max_size = trial.suggest_int("one_hot_max_size", 2, 8)
+        # one_hot_max_size = trial.suggest_int("one_hot_max_size", 2, 8)
         
-        bootstrap_type = trial.suggest_categorical("bootstrap_type", ["MVS", "Bernoulli", "Bayesian"])
+        # bootstrap_type = trial.suggest_categorical("bootstrap_type", ["MVS", "Bernoulli", "Bayesian"])
+        bootstrap_type = "Bernoulli"
         subsample = None
         bagging_temperature = None
         if bootstrap_type == "Bernoulli":
-            subsample = trial.suggest_float("subsample", 0.6, 1.0)
+            subsample = trial.suggest_float("subsample", 0.85, 1.0)
         elif bootstrap_type == "Bayesian":
             bagging_temperature = trial.suggest_float("bagging_temperature", 0.0, 5.0)
                     
         rsm = trial.suggest_float("rsm", 0.70, 0.95)
         
-        # weighting_mode = trial.suggest_categorical(
-        #     "weighting_mode", ["none", "auto_balanced", "scale_pos_weight"]
-        # )
-        weighting_mode = None
+        weighting_mode = trial.suggest_categorical(
+            "weighting_mode", ["none", "auto_balanced", "scale_pos_weight"]
+        )
         auto_class_weights = None
         scale_pos_weight = None
         if weighting_mode == "auto_balanced":
@@ -490,7 +490,7 @@ class Objective:
 
         params = {
             "loss_function": "Logloss",
-            "eval_metric": "Accuracy",
+            "eval_metric": "AUC",
             "iterations": self.max_iterations,
             "od_type": "Iter",
             "depth": depth,
@@ -504,7 +504,6 @@ class Objective:
             "boosting_type": "Plain",
             "auto_class_weights": auto_class_weights,
             "scale_pos_weight": scale_pos_weight,
-            "one_hot_max_size": one_hot_max_size,
             "rsm": rsm,
         }
         if subsample is not None:
@@ -614,7 +613,7 @@ def train_and_save_best(
 
     out = {
         "cv_metrics_mean": {
-            "accuracy": float(np.mean([m.get("accuracy", np.nan) for m in fold_metrics if "accuracy" in m])),
+            "accuracy": float(np.mean([m.get("accuracy_at_best_thr", np.nan) for m in fold_metrics if "accuracy_at_best_thr" in m])),
         },
         "oof_metrics": base_metrics,
         "threshold_metric": threshold_metric,
@@ -775,7 +774,7 @@ def make_submission(
     else:
         pred = (prob >= thr_global).astype(int)
 
-    sub = pd.DataFrame({id_col: test_df[id_col].values, "target": pred})
+    sub = pd.DataFrame({id_col: test_df[id_col].values, "condition": pred})
     out_path = submission_path if submission_path else (model_dir / "submission.csv")
     out_path = Path(out_path)
     sub.to_csv(out_path, index=False)

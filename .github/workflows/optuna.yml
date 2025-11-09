@@ -14,7 +14,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"          # stream logs live
       STUDY_STORAGE: ${{ secrets.STUDY_STORAGE }}  # e.g., postgresql://...
-      STUDY_NAME: meli_used_new_continuous_2025-11-06_v3
+      STUDY_NAME: meli_used_new_continuous_2025-11-08
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +35,7 @@ jobs:
       - name: Run study
         run: |
           python train_catboost_optuna.py \
-            --data data/train.parquet \
-            --group-col seller_id \
+            --data data/processed_train_data.parquet \
             --target condition \
             --study-storage "$STUDY_STORAGE" \
             --study-name "$STUDY_NAME" \
