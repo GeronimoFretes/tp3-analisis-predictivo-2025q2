@@ -47,7 +47,6 @@ jobs:
             --early-stopping-rounds 200 \
             --timeout 19800 \
             --artifacts-dir artifacts \
-            --n-full-seed-models 3 \
             --patience-trials 15 \
             --min-improve 0.0005 \
             --categoricals listing_type_id category_level1 price_bin10 category_id \

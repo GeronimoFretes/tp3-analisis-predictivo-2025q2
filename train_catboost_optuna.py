@@ -586,10 +586,12 @@ def train_and_save_best(
         oof[va_idx] = y_pred_va
         fold_metrics.append(m)
         fold_models.append(model)
-
+        
         # Save fold model
         fold_path = artifacts_dir / f"model_fold{fold_idx}.cbm"
         model.save_model(str(fold_path))
+        
+        print(f'Fold {fold_idx} accuracy: {m['accuracy_at_best_thr']}')
 
     # 2) Pick threshold on OOF
     if threshold_metric == "accuracy":
