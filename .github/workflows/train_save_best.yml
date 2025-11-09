@@ -1,4 +1,4 @@
-name: Optuna Study
+name: Train and Save Best Params
 
 on:
   workflow_dispatch: {}  # run manually from Actions tab
