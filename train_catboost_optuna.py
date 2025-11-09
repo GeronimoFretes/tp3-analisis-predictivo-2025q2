@@ -539,12 +539,14 @@ def train_and_save_best(
     ensure_dir(artifacts_dir)
     cat_idx = [X.columns.get_loc(c) for c in cat_cols] if len(cat_cols) > 0 else []
 
+    best_params['eval_metric'] = 'Accuracy'
+
     # 1) OOF predictions with best params
     cv = get_cv(y, groups, n_splits, seed)
     oof = np.zeros(len(y), dtype=float)
     fold_metrics = []
     fold_models = []
-
+    
     for fold_idx, split in enumerate(cv.split(X, y, groups=groups)):
         tr_idx, va_idx = split
         X_tr, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
