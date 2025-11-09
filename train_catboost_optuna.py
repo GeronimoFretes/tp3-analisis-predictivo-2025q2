@@ -823,6 +823,8 @@ def main():
     
     # Extra seed ensemble
     parser.add_argument("--n-full-seed-models", type=int, default=0, help="Train K extra full-data models with different seeds.")
+    
+    parser.add_argument('--just-train-save-best', action='store_true', help='Train and save with best params found in the study.')
 
     args = parser.parse_args()
 
@@ -867,7 +869,7 @@ def main():
     X = X.loc[:, X.notna().any(axis=0)].copy()
     for c in cat_cols:
         if c in X.columns:
-            X[c] = X[c].astype("object").fillna("__NA__")
+            X[c] = X[c].astype("object")
 
     # Create Optuna study
     sampler = TPESampler(
@@ -909,96 +911,97 @@ def main():
             load_if_exists=True
         )
 
-    # Initialize / resume plateau state from DB and show it
-    state0 = get_plateau_state(study, args.min_improve)
-    if args.progress:
-        print(f"[Plateau] resume: stale={state0['stale']}  best={state0['plateau_best_value']:.6f}  best_trial={state0['plateau_best_trial']}")
-
-    objective = Objective(
-        X=X, y=y, groups=groups, cat_cols=cat_cols,
-        n_splits=args.tune_n_splits if args.tune_n_splits else args.n_splits,
-        seed=args.seed,
-        early_stopping_rounds=args.early_stopping_rounds,
-        thread_count=args.thread_count,
-        eval_metric=args.eval_metric,
-        max_iterations=args.max_iterations,
-        progress=args.progress,
-        log_every_iter=args.log_every_iter,
-    )
-
-    def _cb_plateau(study_obj: optuna.Study, trial: optuna.trial.FrozenTrial):
-        # Load current state (recomputed if missing)
-        state = get_plateau_state(study_obj, args.min_improve)
-        best = state["plateau_best_value"]
-        stale = int(state["stale"])
-
-        # Current trial value
-        val = trial.value
-        if val is None or not math.isfinite(val):
-            return
-
-        improved = (val >= best + float(args.min_improve))
-        if improved:
-            best = float(val)
-            state["plateau_best_value"] = best
-            state["plateau_best_trial"] = trial.number
-            stale = 0
-        else:
-            stale += 1
-
-        state["stale"] = stale
-        set_plateau_state(study_obj, state)
-
+    if not args.just_train_save_best :
+        # Initialize / resume plateau state from DB and show it
+        state0 = get_plateau_state(study, args.min_improve)
         if args.progress:
-            print(f"[Plateau] stale={stale}/{args.patience_trials}  best={best:.6f}  best_trial={state['plateau_best_trial']}")
+            print(f"[Plateau] resume: stale={state0['stale']}  best={state0['plateau_best_value']:.6f}  best_trial={state0['plateau_best_trial']}")
 
-        # Optional early stop on plateau
-        if args.patience_trials and stale >= args.patience_trials:
-            if args.progress:
-                print("[Plateau] patience reached; requesting study stop.")
-            study_obj.stop()
-
-    start_time = time.time()
-    trial_times = []
-
-    def _cb_progress(study, trial):
-        if not args.progress:
-            return
-        dur = trial.duration.total_seconds() if trial.duration else 0.0
-        trial_times.append(dur)
-        avg = sum(trial_times) / max(1, len(trial_times))
-        elapsed_min = (time.time() - start_time) / 60.0
-
-        val = trial.value
-        val_str = f"{val:.6f}" if isinstance(val, (int, float)) and math.isfinite(val) else "NA"
-
-        metric_val = trial.user_attrs.get(f"mean_{args.eval_metric}")
-        metric_str = (f"{metric_val:.6f}" if isinstance(metric_val, (int, float)) and
-                    math.isfinite(metric_val) else "NA")
-
-        print(f"[Trial {trial.number}] state={trial.state.name} value={val_str} "
-            f"{args.eval_metric.upper()}={metric_str} dur={dur:.1f}s "
-            f"avg={avg:.1f}s elapsed~{elapsed_min:.1f} min")
-
-      
-    # Build callbacks list
-    callbacks = []
-    if args.progress:
-        callbacks.append(_cb_progress)
-    callbacks.append(_cb_plateau)  # safe even if patience is 0 (no-op)
-    
-    try:
-        # --- Run optimization ---
-        study.optimize(
-            objective,
-            n_trials=None,                # run until timeout or plateau stop
-            timeout=args.timeout,         # you can pass --timeout from GH Actions, or leave None
-            gc_after_trial=True,
-            show_progress_bar=args.progress,
-            callbacks=callbacks,
+        objective = Objective(
+            X=X, y=y, groups=groups, cat_cols=cat_cols,
+            n_splits=args.tune_n_splits if args.tune_n_splits else args.n_splits,
+            seed=args.seed,
+            early_stopping_rounds=args.early_stopping_rounds,
+            thread_count=args.thread_count,
+            eval_metric=args.eval_metric,
+            max_iterations=args.max_iterations,
+            progress=args.progress,
+            log_every_iter=args.log_every_iter,
         )
-    except KeyboardInterrupt:
-        print("[interrupt] KeyboardInterrupt received. Proceeding to finalize with best-so-far trial...")
+
+        def _cb_plateau(study_obj: optuna.Study, trial: optuna.trial.FrozenTrial):
+            # Load current state (recomputed if missing)
+            state = get_plateau_state(study_obj, args.min_improve)
+            best = state["plateau_best_value"]
+            stale = int(state["stale"])
+
+            # Current trial value
+            val = trial.value
+            if val is None or not math.isfinite(val):
+                return
+
+            improved = (val >= best + float(args.min_improve))
+            if improved:
+                best = float(val)
+                state["plateau_best_value"] = best
+                state["plateau_best_trial"] = trial.number
+                stale = 0
+            else:
+                stale += 1
+
+            state["stale"] = stale
+            set_plateau_state(study_obj, state)
+
+            if args.progress:
+                print(f"[Plateau] stale={stale}/{args.patience_trials}  best={best:.6f}  best_trial={state['plateau_best_trial']}")
+
+            # Optional early stop on plateau
+            if args.patience_trials and stale >= args.patience_trials:
+                if args.progress:
+                    print("[Plateau] patience reached; requesting study stop.")
+                study_obj.stop()
+
+        start_time = time.time()
+        trial_times = []
+
+        def _cb_progress(study, trial):
+            if not args.progress:
+                return
+            dur = trial.duration.total_seconds() if trial.duration else 0.0
+            trial_times.append(dur)
+            avg = sum(trial_times) / max(1, len(trial_times))
+            elapsed_min = (time.time() - start_time) / 60.0
+
+            val = trial.value
+            val_str = f"{val:.6f}" if isinstance(val, (int, float)) and math.isfinite(val) else "NA"
+
+            metric_val = trial.user_attrs.get(f"mean_{args.eval_metric}")
+            metric_str = (f"{metric_val:.6f}" if isinstance(metric_val, (int, float)) and
+                        math.isfinite(metric_val) else "NA")
+
+            print(f"[Trial {trial.number}] state={trial.state.name} value={val_str} "
+                f"{args.eval_metric.upper()}={metric_str} dur={dur:.1f}s "
+                f"avg={avg:.1f}s elapsed~{elapsed_min:.1f} min")
+
+        
+        # Build callbacks list
+        callbacks = []
+        if args.progress:
+            callbacks.append(_cb_progress)
+        callbacks.append(_cb_plateau)  # safe even if patience is 0 (no-op)
+        
+        try:
+            # --- Run optimization ---
+            study.optimize(
+                objective,
+                n_trials=None,                # run until timeout or plateau stop
+                timeout=args.timeout,         # you can pass --timeout from GH Actions, or leave None
+                gc_after_trial=True,
+                show_progress_bar=args.progress,
+                callbacks=callbacks,
+            )
+        except KeyboardInterrupt:
+            print("[interrupt] KeyboardInterrupt received. Proceeding to finalize with best-so-far trial...")
 
     if study.best_trial is None or study.best_value is None:
         raise RuntimeError(
