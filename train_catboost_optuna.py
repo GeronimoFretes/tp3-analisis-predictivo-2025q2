@@ -352,10 +352,24 @@ def fit_one_fold(
         eval_set=valid_pool,
         early_stopping_rounds=early_stopping_rounds,
     )
+    
+    evals = cb.eval_metrics(
+        valid_pool,
+        metrics=["Accuracy"],
+        ntree_start=1,
+        ntree_end=cb.tree_count_ + 1,
+        eval_period=1
+    )
+    acc_series = np.array(evals["Accuracy"])
+    best_iter_acc = int(acc_series.argmax()) + 1  # because ntree_start=1
+
+    # Keep only the best-Accuracy prefix of trees
+    cb.shrink(ntree_start=0, ntree_end=best_iter_acc)
 
     y_pred_va = cb.predict_proba(valid_pool)[:, 1]
     thr_fold, acc_fold = best_threshold_by_accuracy(y_va.values, y_pred_va)
-    fold_metrics = {"accuracy_at_best_thr": acc_fold, "best_thr": thr_fold}
+    fold_metrics = {"accuracy_at_best_thr": acc_fold, "best_thr": thr_fold, "best_iter_acc": best_iter_acc}
+    
     return cb, y_pred_va, fold_metrics
 
 
@@ -539,7 +553,15 @@ def train_and_save_best(
     ensure_dir(artifacts_dir)
     cat_idx = [X.columns.get_loc(c) for c in cat_cols] if len(cat_cols) > 0 else []
 
-    best_params['eval_metric'] = 'Accuracy'
+    best_params["loss_function"] =  "Logloss"
+    best_params["od_type"] =  "LogIterloss"
+    best_params["boosting_type"] =  "Plain"
+    best_params["task_type"] =  "CPU"
+    best_params['iterations'] = 5000
+    if best_params.get('scale_pos_weight') is None :
+        best_params['auto_class_weights'] = 'Balanced'
+    if "subsample" in best_params and best_params.get("bootstrap_type") is None:
+        best_params["bootstrap_type"] = "Bernoulli"
 
     # 1) OOF predictions with best params
     cv = get_cv(y, groups, n_splits, seed)
