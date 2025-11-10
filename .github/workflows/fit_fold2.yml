@@ -34,7 +34,7 @@ jobs:
 
       - name: Run study
         run: |
-          python train_catboost_optuna.py \
+          python train_catboost_optuna_single_fold.py \
             --data data/processed_train_data.parquet \
             --target condition \
             --study-storage "$STUDY_STORAGE" \
@@ -43,7 +43,7 @@ jobs:
             --tune-n-splits 5 \
             --n-splits 5 \
             --progress --log-every-iter 100 \
-            --max-iterations 5000 \
+            --max-iterations 2000 \
             --early-stopping-rounds 200 \
             --timeout 19800 \
             --artifacts-dir artifacts \
