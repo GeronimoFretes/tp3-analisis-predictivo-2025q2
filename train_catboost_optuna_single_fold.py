@@ -572,7 +572,6 @@ def train_and_save_best(
     if n_fold is not None :
         for fold_idx, split in enumerate(cv.split(X, y, groups=groups)):
             if fold_idx == n_fold:
-                fold_idx, split = enumerate(cv.split(X, y, groups=groups))[n_fold]
                 tr_idx, va_idx = split
                 X_tr, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
                 X_va, y_va = X.iloc[va_idx], y.iloc[va_idx]
