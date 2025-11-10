@@ -1,0 +1,88 @@
+name: Fit Fold 0
+
+on:
+  workflow_dispatch: {}  # run manually from Actions tab
+  schedule:
+    - cron: "0 */6 * * *" 
+
+jobs:
+  tune:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: optuna-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      PYTHONUNBUFFERED: "1"          # stream logs live
+      STUDY_STORAGE: ${{ secrets.STUDY_STORAGE }}  # e.g., postgresql://...
+      STUDY_NAME: meli_used_new_continuous_2025-11-08
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Ensure artifacts placeholder
+        run: |
+          mkdir -p artifacts
+          echo "placeholder" > artifacts/.keep
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install catboost optuna psycopg2-binary "scikit-learn>=1.1" pandas pyarrow
+
+      - name: Run study
+        run: |
+          python train_catboost_optuna.py \
+            --data data/processed_train_data.parquet \
+            --target condition \
+            --study-storage "$STUDY_STORAGE" \
+            --study-name "$STUDY_NAME" \
+            --resume \
+            --tune-n-splits 5 \
+            --n-splits 5 \
+            --progress --log-every-iter 100 \
+            --max-iterations 5000 \
+            --early-stopping-rounds 200 \
+            --timeout 19800 \
+            --artifacts-dir artifacts \
+            --patience-trials 15 \
+            --min-improve 0.0005 \
+            --categoricals listing_type_id category_level1 price_bin10 category_id seller_id \
+            --segment-threshold-cols listing_type_id category_id category_level1 price_bin10 shipping_mode \
+            --min-segment-size 300 \
+            --just-train-save-best \
+            --n-fold 0
+      
+      - name: Dump current best trial to artifacts (snapshot from DB)
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, optuna
+          storage = os.environ["STUDY_STORAGE"]
+          name = os.environ["STUDY_NAME"]
+          artifacts = pathlib.Path("artifacts"); artifacts.mkdir(parents=True, exist_ok=True)
+          try:
+              study = optuna.load_study(study_name=name, storage=storage)
+              best = study.best_trial
+              # Save study_best.json
+              (artifacts / "study_best.json").write_text(json.dumps({
+                  "value": best.value,
+                  "number": best.number,
+                  "user_attrs": best.user_attrs,
+                  "params": best.params,
+              }, indent=2))
+              # Save best_params.json (raw params)
+              (artifacts / "best_params.json").write_text(json.dumps(best.params, indent=2))
+              print("Best trial snapshot written.")
+          except Exception as e:
+              print("Could not snapshot best trial:", e)
+          PY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna-artifacts
+          path: artifacts/**
