@@ -49,7 +49,7 @@ jobs:
             --artifacts-dir artifacts \
             --patience-trials 15 \
             --min-improve 0.0005 \
-            --categoricals listing_type_id category_level1 price_bin10 category_id \
+            --categoricals listing_type_id category_level1 price_bin10 category_id seller_id \
             --segment-threshold-cols listing_type_id category_id category_level1 price_bin10 shipping_mode \
             --min-segment-size 300 \
             --just-train-save-best
