@@ -569,30 +569,34 @@ def train_and_save_best(
     oof = np.zeros(len(y), dtype=float)
     fold_metrics = []
     fold_models = []
-    if n_fold :
-        fold_idx, split = enumerate(cv.split(X, y, groups=groups))[n_fold]
-        tr_idx, va_idx = split
-        X_tr, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
-        X_va, y_va = X.iloc[va_idx], y.iloc[va_idx]
+    if n_fold is not None :
+        for fold_idx, split in enumerate(cv.split(X, y, groups=groups)):
+            if fold_idx == n_fold:
+                fold_idx, split = enumerate(cv.split(X, y, groups=groups))[n_fold]
+                tr_idx, va_idx = split
+                X_tr, y_tr = X.iloc[tr_idx], y.iloc[tr_idx]
+                X_va, y_va = X.iloc[va_idx], y.iloc[va_idx]
 
-        model, y_pred_va, m = fit_one_fold(
-            X_tr, y_tr, X_va, y_va,
-            cat_idx=cat_idx,
-            params=best_params,
-            seed=seed + fold_idx,
-            thread_count=thread_count,
-            early_stopping_rounds=early_stopping_rounds,
-            log_every_iter=log_every_iter,
-        )
-        oof[va_idx] = y_pred_va
-        fold_metrics.append(m)
-        fold_models.append(model)
-        
-        # Save fold model
-        fold_path = artifacts_dir / f"model_fold{fold_idx}.cbm"
-        model.save_model(str(fold_path))
-        
-        print(f"Fold {fold_idx} accuracy: {m['accuracy_at_best_thr']}")
+                model, y_pred_va, m = fit_one_fold(
+                    X_tr, y_tr, X_va, y_va,
+                    cat_idx=cat_idx,
+                    params=best_params,
+                    seed=seed + fold_idx,
+                    thread_count=thread_count,
+                    early_stopping_rounds=early_stopping_rounds,
+                    log_every_iter=log_every_iter,
+                )
+                oof[va_idx] = y_pred_va
+                fold_metrics.append(m)
+                fold_models.append(model)
+                
+                # Save fold model
+                fold_path = artifacts_dir / f"model_fold{fold_idx}.cbm"
+                model.save_model(str(fold_path))
+                
+                print(f"Fold {fold_idx} accuracy: {m['accuracy_at_best_thr']}")
+                
+                break
     else :
         for fold_idx, split in enumerate(cv.split(X, y, groups=groups)):
             tr_idx, va_idx = split
@@ -618,6 +622,7 @@ def train_and_save_best(
             
             print(f"Fold {fold_idx} accuracy: {m['accuracy_at_best_thr']}")
 
+    '''
     # 2) Pick threshold on OOF
     if threshold_metric == "accuracy":
         thr, best_score = best_threshold_by_accuracy(y.values, oof)
@@ -738,6 +743,7 @@ def train_and_save_best(
         pass
 
     return out
+    '''
 
 
 # -----------------------
