@@ -341,7 +341,7 @@ def fit_one_fold(
         random_seed=seed,
         thread_count=thread_count,
         verbose=log_every_iter if log_every_iter > 0 else False,
-        use_best_model=True
+        use_best_model=False
     )
 
     train_pool = Pool(X_tr, y_tr, cat_features=cat_idx if len(cat_idx) > 0 else None)
