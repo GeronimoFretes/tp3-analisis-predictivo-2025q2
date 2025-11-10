@@ -1,4 +1,4 @@
-name: Fit Fold 0
+name: Fit Fold 4
 
 on:
   workflow_dispatch: {}  # run manually from Actions tab
